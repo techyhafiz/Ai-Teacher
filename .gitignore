@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Secrets & Environment Variables (Protect Gemini API keys)
+.env
+.env.dontuse
+.env.local
+*.env
+
+# SQLite & ChromaDB Runtime Data
+data/db/*.db
+data/db/*.sqlite
+data/chroma/
+data/performances/
+data/processed/
+data/uploads/*
+!data/uploads/.gitkeep
+data/recordings/
+
+# Temporary test files & screenshots
+scratch*
+*.png
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

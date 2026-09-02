@@ -1,0 +1,24 @@
+# -- Python backend deps --
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+websockets>=12.0
+python-multipart>=0.0.9
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Gemini SDK
+google-genai>=1.0.0
+
+# Document parsing
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+
+# RAG / vector store
+chromadb>=0.5.0
+
+# Audio processing
+numpy>=1.26.0
+
+# Misc
+python-dotenv>=1.0.0
