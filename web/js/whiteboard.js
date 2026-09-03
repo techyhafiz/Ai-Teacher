@@ -409,20 +409,23 @@ const Whiteboard = (() => {
   // ---- draw_diagram shape vocabulary -----------------------------------
 
   function drawDiagram(args) {
-    const { shapes = [], title, clear_first = true } = args;
+    const { shapes = [], title, clear_first = false } = args;
     if (clear_first) {
       ops = [];
       clear();
     }
     if (title) {
-      ctx.save();
-      ctx.fillStyle = '#fde047'; // Gold chalk title
-      ctx.font = `700 24px 'Segoe UI', sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.shadowColor = 'rgba(253, 224, 71, 0.45)';
-      ctx.shadowBlur = 6;
-      ctx.fillText(title, W / 2, 38);
-      ctx.restore();
+      const hasExistingTitle = ops.some(o => o.tool === 'draw_diagram' && o.args?.title);
+      if (!hasExistingTitle) {
+        ctx.save();
+        ctx.fillStyle = '#fde047'; // Gold chalk title
+        ctx.font = `700 24px 'Segoe UI', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.shadowColor = 'rgba(253, 224, 71, 0.45)';
+        ctx.shadowBlur = 6;
+        ctx.fillText(title, W / 2, 38);
+        ctx.restore();
+      }
     }
     for (const s of shapes) drawShape(s);
     ops.push({ tool: 'draw_diagram', args });
@@ -943,6 +946,7 @@ const Whiteboard = (() => {
 
   return {
     init,
+    resize,
     clear,
     redraw,
     writeText,

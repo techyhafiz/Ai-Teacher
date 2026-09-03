@@ -270,11 +270,12 @@ def enrich_segment_visuals(seg: dict, topic: str) -> None:
     """Ensure every segment has creative, colorful whiteboard visuals.
     Synthesizes schematic diagrams, formulas, or graphs when LLM output is sparse."""
     visuals = seg.get("visuals", [])
-    has_rich = any(
-        v.get("tool") in ("draw_diagram", "plot_graph", "draw_equation", "draw_flowchart", "show_table", "write_code")
+    has_diagram = any(
+        v.get("tool") in ("draw_diagram", "plot_graph", "draw_flowchart")
         for v in visuals
     )
-    if has_rich and len(visuals) >= 2:
+    has_equation = any(v.get("tool") == "draw_equation" for v in visuals)
+    if has_diagram and has_equation:
         return
 
     concept = seg.get("concept", topic or "Core Concept")

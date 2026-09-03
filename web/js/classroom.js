@@ -64,6 +64,10 @@ const Classroom = (() => {
 
     // init whiteboard + avatar
     Whiteboard.init($('whiteboard'));
+    requestAnimationFrame(() => {
+      Whiteboard.resize();
+      Whiteboard.redraw();
+    });
     await initAvatar();
 
     // load plan + performances
@@ -584,24 +588,131 @@ const Classroom = (() => {
     }
   }
 
+  function ensureSegmentVisuals(seg, topic) {
+    let visuals = (seg.visuals && seg.visuals.length > 0) ? [...seg.visuals] : [];
+    const concept = seg.concept || seg.kind || topic || 'Core Concept';
+    const script = (seg.script && (seg.script.main || seg.script.simpler)) || '';
+    const corpus = `${concept} ${script} ${topic}`.toLowerCase();
+
+    const hasDiagram = visuals.some(v => v.tool === 'draw_diagram' || v.tool === 'plot_graph' || v.tool === 'draw_flowchart');
+    const hasEquation = visuals.some(v => v.tool === 'draw_equation');
+
+    if (!hasDiagram) {
+      if (/circuit|ohm|volt|current|resistor|battery|ampere|electricity/.test(corpus)) {
+        visuals.unshift({
+          tool: 'draw_diagram',
+          after_sentence: 1,
+          args: {
+            title: `${concept}: Complete Circuit Schematic`,
+            clear_first: false,
+            shapes: [
+              { kind: 'battery', x: 18, y: 50, voltage: 12, label: '12V Battery', chalk: 'yellow' },
+              { kind: 'wire', points: [18, 42, 18, 22, 82, 22, 82, 42], chalk: 'blue' },
+              { kind: 'resistor', x: 82, y: 50, label: 'R = 6 \u03a9', chalk: 'pink' },
+              { kind: 'wire', points: [82, 58, 82, 78, 18, 78, 18, 58], chalk: 'blue' },
+              { kind: 'arrow', x: 42, y: 22, x2: 58, y2: 22, label: 'Current I = 2.0A \u2192', chalk: 'green' },
+              { kind: 'circle', x: 50, y: 50, r: 4, label: 'V = 12V', chalk: 'yellow' }
+            ]
+          }
+        });
+      } else if (/force|newton|gravity|friction|motion|velocity|acceleration|mass/.test(corpus)) {
+        visuals.unshift({
+          tool: 'draw_diagram',
+          after_sentence: 1,
+          args: {
+            title: `${concept}: Free-Body Vector Diagram`,
+            clear_first: false,
+            shapes: [
+              { kind: 'line', points: [10, 68, 90, 68], chalk: 'white' },
+              { kind: 'rect', x: 50, y: 54, w: 22, h: 16, label: 'Mass (m)', chalk: 'yellow', fill: true },
+              { kind: 'vector', x: 50, y: 54, x2: 50, y2: 80, label: 'F_g = mg', chalk: 'pink' },
+              { kind: 'vector', x: 50, y: 54, x2: 50, y2: 28, label: 'F_N (Normal)', chalk: 'blue' },
+              { kind: 'vector', x: 50, y: 54, x2: 76, y2: 54, label: 'Applied Force \u2192', chalk: 'green' },
+              { kind: 'vector', x: 50, y: 54, x2: 30, y2: 54, label: '\u2190 Friction', chalk: 'pink' }
+            ]
+          }
+        });
+      } else if (/calculus|derivative|integral|slope|graph|function|quadratic|trig|sine/.test(corpus)) {
+        visuals.unshift({
+          tool: 'plot_graph',
+          after_sentence: 1,
+          args: {
+            title: `${concept}: Coordinate Function Graph`,
+            functions: [
+              { fn: 'x**2 - 2', label: 'f(x) = x\u00b2 - 2', color: 'yellow' },
+              { fn: '2*x - 3', label: 'Tangent Line (Slope = 2x)', color: 'pink' }
+            ],
+            x_range: [-3, 3],
+            x_label: 'x',
+            y_label: 'f(x)'
+          }
+        });
+      } else {
+        visuals.unshift({
+          tool: 'draw_diagram',
+          after_sentence: 1,
+          args: {
+            title: `Model: ${concept}`,
+            clear_first: false,
+            shapes: [
+              { kind: 'rect', x: 20, y: 50, w: 22, h: 22, label: '1. Input / Foundation', chalk: 'blue' },
+              { kind: 'arrow', x: 31, y: 50, x2: 44, y2: 50, label: 'Drives', chalk: 'white' },
+              { kind: 'rect', x: 55, y: 50, w: 22, h: 22, label: `2. ${concept.slice(0, 16)}`, chalk: 'yellow', fill: true },
+              { kind: 'arrow', x: 66, y: 50, x2: 79, y2: 50, label: 'Yields', chalk: 'white' },
+              { kind: 'rect', x: 88, y: 50, w: 18, h: 22, label: '3. Result', chalk: 'green' }
+            ]
+          }
+        });
+      }
+    }
+
+    if (!hasEquation) {
+      if (/circuit|ohm|volt|current|resistor|battery|ampere|electricity/.test(corpus)) {
+        visuals.push({
+          tool: 'draw_equation',
+          after_sentence: 2,
+          args: {
+            label: "Ohm's Law Formula",
+            latex: String.raw`V = I \times R \implies I = \frac{V}{R} = \frac{12\text{ V}}{6\,\Omega} = 2.0\text{ A}`,
+            position: 'bottom',
+            chalk: 'yellow'
+          }
+        });
+      } else if (/force|newton|gravity|friction|motion|velocity|acceleration|mass/.test(corpus)) {
+        visuals.push({
+          tool: 'draw_equation',
+          after_sentence: 2,
+          args: {
+            label: "Newton's Second Law",
+            latex: String.raw`\sum \vec{F} = m \cdot \vec{a} \implies \vec{a} = \frac{\vec{F}_{\text{net}}}{m}`,
+            position: 'bottom',
+            chalk: 'yellow'
+          }
+        });
+      }
+    }
+
+    return visuals;
+  }
+
   function playLiveSegment(seg, onDone) {
     return new Promise((resolve) => {
       Whiteboard.clear();
       const script = (seg.script && (seg.script.main || seg.script.simpler)) || 'Welcome to this lesson!';
-      const visuals = seg.visuals || [];
+      const visuals = ensureSegmentVisuals(seg, state.plan.topic || state.plan.lesson_title);
 
       // Calculate estimated speech duration: ~2.3 words per sec
       const words = script.split(/\s+/).filter(Boolean);
       const estDuration = Math.max(6, Math.min(60, words.length / 2.3));
 
-      // Build timeline from visuals
+      // Build timeline: visual 0 starts at t = 0.05s immediately so board is NEVER blank!
       state.timeline = visuals.map((v, i) => {
-        const afterSent = v.after_sentence || (i + 1);
-        const t = Math.min(estDuration - 0.8, Math.max(0.6, (afterSent / Math.max(1, visuals.length + 1)) * estDuration));
+        const t = i === 0 ? 0.05 : Math.min(estDuration - 0.8, Math.max(1.8, (i / Math.max(1, visuals.length)) * estDuration));
         return {
           t: t,
           tool: v.tool,
           args: v.args,
+          valid: true,
           fired: false
         };
       });
@@ -644,7 +755,28 @@ const Classroom = (() => {
   function playPerformance(perf, onDone) {
     return new Promise(async (resolve) => {
       Whiteboard.clear();
-      state.timeline = (perf.timeline || []).map(e => ({ ...e, fired: false }));
+      const seg = state.plan.segments[state.segIndex];
+      const visuals = ensureSegmentVisuals(seg, state.plan.topic || state.plan.lesson_title);
+
+      // Build or enhance timeline: ensure primary visual starts at t = 0.05s
+      let rawTl = (perf.timeline && perf.timeline.length) ? [...perf.timeline] : [];
+      if (!rawTl.length || !rawTl.some(e => e.tool === 'draw_diagram' || e.tool === 'plot_graph')) {
+        const estDur = perf.duration || 16;
+        rawTl = visuals.map((v, i) => ({
+          t: i === 0 ? 0.05 : Math.min(estDur - 1, (i + 1) * 3.5),
+          tool: v.tool,
+          args: v.args,
+          valid: true,
+          fired: false
+        }));
+      }
+
+      // First visual ALWAYS triggers immediately (at 50ms) so board draws right away
+      if (rawTl.length > 0 && rawTl[0].t > 0.1) {
+        rawTl[0].t = 0.05;
+      }
+
+      state.timeline = rawTl.map(e => ({ ...e, fired: false }));
       state.playing = true;
       setPlayIcon();
       setupSubtitles(perf.transcript || '');
@@ -653,14 +785,8 @@ const Classroom = (() => {
       try {
         buf = await loadPerformanceAudio(perf.wav_name);
       } catch (e) {
-        console.error('audio load failed', e);
-        toast('Audio missing — skipping segment');
-        state.playing = false;
-        setPlayIcon();
-        stopSubtitles();
-        onDone?.();
-        resolve();
-        return;
+        console.warn('Audio fetch failed, gracefully falling back to live TTS segment:', e);
+        return playLiveSegment(seg, onDone).then(resolve);
       }
 
       const { words, wtimes, wdurations } =
@@ -684,9 +810,13 @@ const Classroom = (() => {
       };
 
       // Play audio buffer through WebAudio and drive real-time 3D/2D lipsync
-      const src = getAudioCtx().createBufferSource();
+      const actx = getAudioCtx();
+      if (actx.state === 'suspended') {
+        actx.resume().catch(() => {});
+      }
+      const src = actx.createBufferSource();
       src.buffer = buf;
-      src.connect(getAudioCtx().destination);
+      src.connect(actx.destination);
       if (avatar3D) avatar3D.attachAudioSource(src);
       TeacherAvatar2D.attachAudioSource(src);
       src.onended = () => finish();
@@ -705,6 +835,7 @@ const Classroom = (() => {
         if (!e.fired && t >= e.t) {
           e.fired = true;
           if (e.valid !== false) {
+            console.info(`[Whiteboard] Executing ${e.tool} at t=${t.toFixed(2)}s:`, e.args);
             Whiteboard.execute(e.tool, e.args);
             fireSubtitlesPause(800);
           }

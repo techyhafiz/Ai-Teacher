@@ -169,6 +169,14 @@ export class Avatar3DEngine {
           this.headBone = null;
           this.neckBone = null;
           this.spineBone = null;
+          this.leftArmBone = null;
+          this.rightArmBone = null;
+          this.leftForeArmBone = null;
+          this.rightForeArmBone = null;
+          this.leftHandBone = null;
+          this.rightHandBone = null;
+          this.leftShoulderBone = null;
+          this.rightShoulderBone = null;
 
           // Collect morph target meshes and skeleton bones
           this.model.traverse((child) => {
@@ -177,11 +185,22 @@ export class Avatar3DEngine {
             }
             if (child.isBone || child.type === 'Bone') {
               const name = child.name.toLowerCase();
-              if (name.includes('head') && !name.includes('top')) this.headBone = child;
+              if (name.includes('head') && !name.includes('top') && !name.includes('mesh')) this.headBone = child;
               else if (name.includes('neck')) this.neckBone = child;
               else if (name.includes('spine') && !this.spineBone) this.spineBone = child;
+              else if (name.includes('leftarm') || name.includes('arm_l') || name.includes('arm.l')) this.leftArmBone = child;
+              else if (name.includes('rightarm') || name.includes('arm_r') || name.includes('arm.r')) this.rightArmBone = child;
+              else if (name.includes('leftforearm') || name.includes('forearm_l') || name.includes('forearm.l')) this.leftForeArmBone = child;
+              else if (name.includes('rightforearm') || name.includes('forearm_r') || name.includes('forearm.r')) this.rightForeArmBone = child;
+              else if (name.includes('lefthand') || name.includes('hand_l') || name.includes('hand.l')) this.leftHandBone = child;
+              else if (name.includes('righthand') || name.includes('hand_r') || name.includes('hand.r')) this.rightHandBone = child;
+              else if (name.includes('leftshoulder') || name.includes('shoulder_l')) this.leftShoulderBone = child;
+              else if (name.includes('rightshoulder') || name.includes('shoulder_r')) this.rightShoulderBone = child;
             }
           });
+
+          // Apply natural relaxed standing posture (eliminates T-pose / hands broad)
+          this._applyTeacherPose();
 
           this.scene.add(this.model);
           this.setCameraView(this.options.cameraView);
@@ -195,6 +214,35 @@ export class Avatar3DEngine {
         (err) => reject(err)
       );
     });
+  }
+
+  _applyTeacherPose() {
+    // Human-like relaxed standing teacher pose
+    // Rotates arms down along the torso in clean resting posture
+    if (this.leftArmBone) {
+      this.leftArmBone.rotation.set(0.12, 0.0, 1.28);
+    }
+    if (this.rightArmBone) {
+      this.rightArmBone.rotation.set(0.12, 0.0, -1.28);
+    }
+    if (this.leftForeArmBone) {
+      this.leftForeArmBone.rotation.set(0, 0, 0);
+    }
+    if (this.rightForeArmBone) {
+      this.rightForeArmBone.rotation.set(0, 0, 0);
+    }
+    if (this.leftHandBone) {
+      this.leftHandBone.rotation.set(0, 0, 0);
+    }
+    if (this.rightHandBone) {
+      this.rightHandBone.rotation.set(0, 0, 0);
+    }
+    if (this.leftShoulderBone) {
+      this.leftShoulderBone.rotation.set(0, 0, 0.04);
+    }
+    if (this.rightShoulderBone) {
+      this.rightShoulderBone.rotation.set(0, 0, -0.04);
+    }
   }
 
   setCameraView(view) {
@@ -231,12 +279,22 @@ export class Avatar3DEngine {
   }
 
   attachAudioSource(sourceNode) {
-    const actx = this._getAudioContext();
-    this.analyser = actx.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.analyser.smoothingTimeConstant = 0.25; // Ultra-fast and snappy response
-    this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
-    sourceNode.connect(this.analyser);
+    if (!sourceNode) return;
+    try {
+      // CRITICAL: Always use the source node's own AudioContext to prevent cross-context connect errors!
+      const actx = sourceNode.context || this._getAudioContext();
+      if (actx.state === 'suspended') {
+        actx.resume().catch(() => {});
+      }
+      this.analyser = actx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0.25; // Ultra-fast and snappy response
+      this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+      sourceNode.connect(this.analyser);
+      console.info('Successfully attached audio source to 3D avatar lipsync analyser');
+    } catch (e) {
+      console.warn('Cross-context audio connect error, fallback:', e);
+    }
     this.isSpeaking = true;
   }
 
@@ -556,17 +614,41 @@ export class Avatar3DEngine {
     this._applyMorph('browDownRight', this.moodInfluences.thoughtful * 0.5);
 
     // -------------------------------------------------------------
-    // 4. Idle Organic Breathing & Head Motion
+    // 4. Idle Organic Breathing & Natural Teacher Gestures
     // -------------------------------------------------------------
     if (this.options.idleMove) {
       this.breathPhase += 0.035;
       const breath = Math.sin(this.breathPhase);
 
+      // Spine & Torso Breathing
+      if (this.spineBone) {
+        this.spineBone.rotation.x = Math.sin(this.breathPhase * 0.8) * 0.012;
+        this.spineBone.rotation.y = Math.sin(this.breathPhase * 0.5) * 0.010;
+      }
+      if (this.neckBone) {
+        this.neckBone.rotation.y = Math.sin(this.breathPhase * 0.6) * 0.015;
+      }
+
+      // Head Tilts and Speech Nodding
       if (this.headBone) {
         const talkNod = this.isSpeaking ? Math.sin(this.breathPhase * 2.5) * 0.045 : 0;
         this.headBone.rotation.x = 0.02 + breath * 0.015 + talkNod;
         this.headBone.rotation.y = Math.sin(this.breathPhase * 0.7) * 0.025;
         this.headBone.rotation.z = Math.sin(this.breathPhase * 0.5) * 0.01;
+      }
+
+      // Natural Teaching Posture & Subtle Breathing Sway
+      if (this.leftArmBone) {
+        this.leftArmBone.rotation.z = 1.28 + Math.sin(this.breathPhase * 0.8) * 0.015;
+      }
+      if (this.rightArmBone) {
+        this.rightArmBone.rotation.z = -1.28 - Math.sin(this.breathPhase * 0.8) * 0.015;
+      }
+      if (this.leftForeArmBone) {
+        this.leftForeArmBone.rotation.set(0, 0, 0);
+      }
+      if (this.rightForeArmBone) {
+        this.rightForeArmBone.rotation.set(0, 0, 0);
       }
     }
 
