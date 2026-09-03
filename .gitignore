@@ -28,6 +28,9 @@ data/recordings/
 # Temporary test files & screenshots
 scratch*
 *.png
+run_scheduler.py
+scheduler_status.log
+*scheduler*
 
 # IDE / OS
 .DS_Store

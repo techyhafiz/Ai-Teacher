@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Avatar Live Studio & Test Bench</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #140f0c;
+    color: #f5ede2;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .stage-panel {
+    flex: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 40%, #2e231b 0%, #120e0b 100%);
+    border-right: 1px solid #33271f;
+  }
+  #avatar-container {
+    width: 90%;
+    max-width: 650px;
+    height: 80vh;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6), inset 0 0 2px rgba(255,255,255,0.1);
+    background: #1a1410;
+    position: relative;
+  }
+  .status-badge {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(20, 15, 12, 0.85);
+    border: 1px solid #4a382b;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e8a33d;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    backdrop-filter: blur(8px);
+  }
+  .controls-panel {
+    width: 380px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    background: #1c1511;
+    overflow-y: auto;
+  }
+  h1 { font-size: 20px; color: #e8a33d; font-weight: 700; margin-bottom: 4px; }
+  p.sub { font-size: 13px; color: #9c8a79; margin-bottom: 12px; }
+  .section {
+    background: #251c16;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid #3d2e23;
+  }
+  .section h2 { font-size: 14px; color: #d6c5b2; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .btn-group { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    background: #35271e;
+    color: #f5ede2;
+    border: 1px solid #523e30;
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  button:hover { background: #4a372a; border-color: #e8a33d; color: #fff; }
+  button.active { background: #e8a33d; color: #140f0c; border-color: #e8a33d; }
+  button.primary {
+    background: linear-gradient(135deg, #e8a33d, #c97f1e);
+    color: #140f0c;
+    border: none;
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  button.primary:hover { opacity: 0.95; transform: translateY(-1px); }
+  textarea {
+    width: 100%;
+    background: #140f0c;
+    border: 1px solid #453427;
+    border-radius: 8px;
+    padding: 10px;
+    color: #f5ede2;
+    font-family: inherit;
+    font-size: 13px;
+    resize: vertical;
+    margin-bottom: 10px;
+  }
+  textarea:focus { outline: none; border-color: #e8a33d; }
+  .nav-link {
+    margin-top: auto;
+    text-align: center;
+    font-size: 13px;
+    color: #9c8a79;
+    text-decoration: none;
+  }
+  .nav-link:hover { color: #e8a33d; text-decoration: underline; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./libs/three/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./libs/three/addons/controls/OrbitControls.js",
+    "three/addons/loaders/GLTFLoader.js": "./libs/three/addons/loaders/GLTFLoader.js",
+    "three/addons/loaders/DRACOLoader.js": "./libs/three/addons/loaders/DRACOLoader.js",
+    "three/addons/libs/meshopt_decoder.module.js": "./libs/three/addons/libs/meshopt_decoder.module.js",
+    "three/addons/utils/BufferGeometryUtils.js": "./libs/three/addons/utils/BufferGeometryUtils.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<div class="stage-panel">
+  <div class="status-badge" id="status-badge">
+    <span>⏳ Initializing 3D Engine…</span>
+  </div>
+  <div id="avatar-container"></div>
+</div>
+
+<div class="controls-panel">
+  <div>
+    <h1>3D Avatar Test Studio</h1>
+    <p class="sub">Direct test bench for local 3D Ready Player Me / Avaturn teacher models.</p>
+  </div>
+
+  <div class="section">
+    <h2>1. Select 3D Teacher Model</h2>
+    <div class="btn-group">
+      <button class="active" onclick="switchAvatar('aarav', this)">👨‍🏫 Aarav Sir (aarav.glb)</button>
+      <button onclick="switchAvatar('meera', this)">👩‍🏫 Meera Ma'am (meera.glb)</button>
+      <button onclick="switchAvatar('bheem', this)">👨‍🦳 Prof. Bheem (bheem.glb)</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>2. Camera Angle</h2>
+    <div class="btn-group">
+      <button class="active" onclick="setCamera('upper', this)">Torso / Upper (Classroom)</button>
+      <button onclick="setCamera('head', this)">Close-up (Head)</button>
+      <button onclick="setCamera('full', this)">Full Body</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>3. Facial Mood & Expressions</h2>
+    <div class="btn-group">
+      <button class="active" onclick="setMood('neutral', this)">Neutral</button>
+      <button onclick="setMood('happy', this)">Happy / Smile</button>
+      <button onclick="setMood('thoughtful', this)">Thoughtful</button>
+      <button onclick="setMood('surprised', this)">Surprised</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>4. Test Real-Time 3D Lip-Sync Speech</h2>
+    <div style="margin-bottom:12px;">
+      <button class="primary" id="btn-sample-voice" onclick="playCurrentSampleVoice()" style="margin-bottom:8px;">
+        🎧 Play Real Teacher Voice Sample (100% Synced)
+      </button>
+    </div>
+
+    <div style="margin-bottom: 12px;">
+      <label style="font-size:12px; color:#c4b4a3; display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Mouth Movement Expressiveness:</span>
+        <span id="sens-label">125%</span>
+      </label>
+      <input type="range" id="sens-slider" min="0.5" max="2.0" step="0.05" value="1.25" style="width:100%; accent-color:#e8a33d;" oninput="onSensitivityChange(this.value)">
+    </div>
+
+    <textarea id="speech-text" rows="2">Hello student! Welcome to your interactive physics and calculus classroom. Let us begin!</textarea>
+    <button id="btn-speak" style="width:100%;" onclick="speakText()">🗣️ Speak Custom Text (WebSpeech)</button>
+  </div>
+
+  <a href="/" class="nav-link">← Back to AI Teacher Main Classroom</a>
+</div>
+
+<script type="module">
+  import { Avatar3DEngine } from './js/avatar-engine.js';
+
+  let engine = null;
+  const container = document.getElementById('avatar-container');
+  const statusBadge = document.getElementById('status-badge');
+
+  window.addEventListener('error', (e) => {
+    console.error(e);
+    if (statusBadge) statusBadge.innerHTML = `<span style="color:#ef4444;">❌ Error: ${e.message || e}</span>`;
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error(e);
+    if (statusBadge) statusBadge.innerHTML = `<span style="color:#ef4444;">❌ Rejection: ${e.reason?.message || e.reason || e}</span>`;
+  });
+
+  const AVATARS = {
+    'aarav': './avatars/aarav.glb',
+    'meera': './avatars/meera.glb',
+    'bheem': './avatars/bheem.glb',
+  };
+
+  const SAMPLE_AUDIO = {
+    'aarav': './audio/sample_aarav.wav',
+    'meera': './audio/sample_meera.wav',
+    'bheem': './audio/sample_bheem.wav',
+  };
+
+  let currentAvatarKey = 'aarav';
+
+  async function init() {
+    try {
+      statusBadge.innerHTML = '<span>⚡ Initializing 3D Avatar Engine…</span>';
+      engine = new Avatar3DEngine(container, {
+        cameraView: 'upper',
+        idleMove: true,
+        lipSyncSensitivity: 1.25,
+      });
+      window.engine = engine;
+
+      await loadAvatar(currentAvatarKey);
+    } catch (e) {
+      console.error(e);
+      statusBadge.innerHTML = `<span style="color:#ef4444;">❌ Load failed: ${e.message}</span>`;
+    }
+  }
+
+  async function loadAvatar(key) {
+    currentAvatarKey = key;
+    const url = AVATARS[key];
+    statusBadge.innerHTML = `<span>⏳ Loading 3D Model: ${key}.glb …</span>`;
+    try {
+      await engine.loadModel(url, (p) => {
+        statusBadge.innerHTML = `<span>⏳ Loading 3D Model: ${Math.round(p * 100)}% …</span>`;
+      });
+      statusBadge.innerHTML = `<span>✅ 3D Avatar Active: <b>${key}.glb</b> (Orbit with Mouse)</span>`;
+    } catch (e) {
+      console.error(e);
+      statusBadge.innerHTML = `<span style="color:#ef4444;">❌ Error: ${e.message}</span>`;
+    }
+  }
+
+  window.switchAvatar = function(key, el) {
+    document.querySelectorAll('.controls-panel .section:nth-child(2) button').forEach(b => b.classList.remove('active'));
+    if (el) el.classList.add('active');
+    else if (window.event?.target) window.event.target.classList.add('active');
+    loadAvatar(key);
+  };
+
+  window.setCamera = function(view, el) {
+    document.querySelectorAll('.controls-panel .section:nth-child(3) button').forEach(b => b.classList.remove('active'));
+    if (el) el.classList.add('active');
+    else if (window.event?.target) window.event.target.classList.add('active');
+    if (engine) engine.setCameraView(view);
+  };
+
+  window.setMood = function(mood, el) {
+    document.querySelectorAll('.controls-panel .section:nth-child(4) button').forEach(b => b.classList.remove('active'));
+    if (el) el.classList.add('active');
+    else if (window.event?.target) window.event.target.classList.add('active');
+    if (engine) engine.setMood(mood);
+  };
+
+  window.onSensitivityChange = function(val) {
+    document.getElementById('sens-label').textContent = Math.round(val * 100) + '%';
+    if (engine) engine.setSensitivity(val);
+  };
+
+  window.playCurrentSampleVoice = async function() {
+    if (!engine) return;
+    const btn = document.getElementById('btn-sample-voice');
+    const audioUrl = SAMPLE_AUDIO[currentAvatarKey] || SAMPLE_AUDIO['aarav'];
+    btn.disabled = true;
+    btn.textContent = '🔊 Playing Synced Voice Sample…';
+    await engine.playVoiceSample(audioUrl, () => {
+      btn.disabled = false;
+      btn.textContent = '🎧 Play Real Teacher Voice Sample (100% Synced)';
+    });
+  };
+
+  window.speakText = function() {
+    const text = document.getElementById('speech-text').value.trim();
+    if (!text || !engine) return;
+    const btn = document.getElementById('btn-speak');
+    btn.disabled = true;
+    btn.textContent = '🔊 Speaking with Lip-Sync…';
+    engine.speakText(text, () => {
+      btn.disabled = false;
+      btn.textContent = '🗣️ Speak Custom Text (WebSpeech)';
+    });
+  };
+
+  init();
+</script>
+
+</body>
+</html>

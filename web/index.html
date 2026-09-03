@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Teacher — Classroom</title>
+<link rel="stylesheet" href="libs/katex/katex.min.css"><link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ================= SCREEN 1: SETUP ================= -->
+<div id="setup-screen" class="screen">
+  <div class="setup-wrap">
+    <header class="setup-header">
+      <div class="logo">🎓 <span>AI Teacher</span></div>
+      <div class="tagline">Your personal human-like tutor</div>
+      <a href="/avatar-test.html" target="_blank" class="btn ghost small" style="margin-left:auto;text-decoration:none;color:#e8a33d;display:flex;align-items:center;gap:6px;">🎭 3D Avatar Studio</a>
+    </header>
+
+    <section class="card learner-card">
+      <h2>1 · Who is learning?</h2>
+      <div class="learner-row">
+        <select id="learner-select" class="input"></select>
+        <input id="learner-name" class="input" type="text"
+               placeholder="New learner name" maxlength="40">
+        <button id="learner-new" class="btn ghost">+ New</button>
+      </div>
+    </section>
+
+    <section class="card prefs-card">
+      <h2>2 · How do you want to learn?</h2>
+      <div class="prefs-row">
+        <label>Language
+          <select id="pref-language" class="input">
+            <option value="en">English</option>
+            <option value="hi">हिंदी (Hindi)</option>
+            <option value="hinglish">Hinglish</option>
+          </select>
+        </label>
+        <label>Level
+          <select id="pref-level" class="input">
+            <option value="beginner">Beginner</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
+        </label>
+        <label>Time
+          <select id="pref-time" class="input">
+            <option value="5min">5 minutes</option>
+            <option value="20min" selected>20 minutes</option>
+            <option value="60min">60 minutes</option>
+            <option value="7days">7 days (study plan)</option>
+          </select>
+        </label>
+        <label>Teacher
+          <select id="pref-teacher" class="input">
+            <option value="Aarav Sir">Aarav Sir</option>
+            <option value="Meera Ma'am">Meera Ma'am</option>
+            <option value="Professor Bheem">Professor Bheem</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card source-card">
+      <h2>3 · What should we learn?</h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="topic">📚 Teach me a topic</button>
+        <button class="tab" data-tab="upload">📄 Teach my material</button>
+      </div>
+
+      <div id="tab-topic" class="tab-body">
+        <textarea id="topic-input" class="input" rows="2"
+          placeholder="e.g. 'Explain Newton's Laws to a Class 8 student'  ·  'Teach me React for a technical interview'  ·  'Mujhe Machine Learning samjhao'"></textarea>
+        <div class="hint-row">
+          <label class="check"><input type="checkbox" id="path-toggle">
+            Broad topic — build me a learning path</label>
+        </div>
+      </div>
+
+      <div id="tab-upload" class="tab-body hidden">
+        <div id="dropzone" class="dropzone">
+          <div class="dz-inner">
+            <div class="dz-icon">📄</div>
+            <div>Drop your PDF / DOCX / PPTX / TXT / MD here<br>
+              <small>or</small></div>
+            <button class="btn ghost" id="dz-browse">Browse file</button>
+            <input type="file" id="file-input" accept=".pdf,.docx,.pptx,.txt,.md,.markdown" hidden>
+          </div>
+        </div>
+        <div id="doc-info" class="doc-info hidden">
+          <div id="doc-name" class="doc-name"></div>
+          <div id="doc-stats" class="doc-stats"></div>
+          <button class="btn ghost small" id="doc-clear">✕ remove</button>
+        </div>
+        <input id="doc-focus" class="input" type="text"
+          placeholder="Focus (optional) — e.g. 'Chapter 4' or 'photosynthesis'">
+      </div>
+
+      <button id="start-lesson" class="btn primary big">Start Lesson →</button>
+    </section>
+
+    <footer class="setup-footer">
+      <div id="setup-status" class="setup-status hidden">
+        <div class="spinner"></div>
+        <span id="setup-status-text">Preparing…</span>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<!-- ================= SCREEN 2: CLASSROOM ================= -->
+<div id="classroom-screen" class="screen hidden">
+  <div class="classroom-topbar">
+    <div class="lesson-title" id="classroom-title">…</div>
+    <div class="topbar-right">
+      <div class="seg-progress"><div class="seg-progress-fill" id="seg-progress-fill"></div>
+        <span id="seg-progress-label">0/0</span></div>
+      <div class="rec-dot hidden" id="rec-dot" title="Recording lesson video">●</div>
+      <button class="btn ghost small" id="btn-raise-hand" title="Pause and ask anything">🤚 Ask</button>
+      <div class="reasoning-badge" id="reasoning-badge" title="Teacher's live decisions">🧠</div>
+      <div class="lang-pill" id="lang-pill">EN</div>
+    </div>
+  </div>
+
+  <div class="classroom-stage">
+    <div class="avatar-col" id="avatar-col">
+      <div id="talkinghead"></div>
+      <div class="persona-name" id="persona-name">Aarav Sir</div>
+    </div>
+    <div class="board-col">
+      <canvas id="whiteboard"></canvas>
+      <div id="board-overlay" class="board-overlay"></div>
+      <div class="board-frame"></div>
+      <div class="subtitles" id="subtitles"></div>
+    </div>
+  </div>
+
+  <div class="classroom-bottombar">
+    <button class="btn ghost" id="btn-play-pause" title="Play / pause">⏸</button>
+    <div class="mic-status" id="mic-status">🎤 ready</div>
+    <div class="live-indicator hidden" id="live-indicator">● LIVE</div>
+    <div class="reasoning-panel hidden" id="reasoning-panel">
+      <div class="rp-head">Teacher's reasoning <button id="rp-close">✕</button></div>
+      <div class="rp-body" id="rp-body"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="chalk-legend">
+      <span class="chalk-chip white">white</span>
+      <span class="chalk-chip yellow">yellow</span>
+      <span class="chalk-chip blue">blue</span>
+      <span class="chalk-chip pink">pink</span>
+      <span class="chalk-chip green">green</span>
+    </div>
+  </div>
+
+  <!-- checkpoint / quiz overlay -->
+  <div id="checkpoint-overlay" class="checkpoint-overlay hidden">
+    <div class="cp-card">
+      <div class="cp-kind" id="cp-kind">CHECKPOINT</div>
+      <div class="cp-question" id="cp-question">…</div>
+      <div class="cp-options" id="cp-options"></div>
+      <div class="cp-answering" id="cp-answering">
+        <button class="btn primary" id="cp-mic">🎤 Answer by voice</button>
+        <div class="or">or</div>
+        <input id="cp-text" class="input" type="text"
+               placeholder="Type your answer…">
+        <button class="btn ghost" id="cp-send">Send</button>
+      </div>
+      <div class="cp-live hidden" id="cp-live">
+        <div class="cp-live-status" id="cp-live-status">listening…</div>
+        <div class="cp-live-transcript" id="cp-live-transcript"></div>
+        <button class="btn ghost small" id="cp-stop">Done speaking</button>
+      </div>
+      <div class="cp-hint hidden" id="cp-hint"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= SCREEN 3: REPORT ================= -->
+<div id="report-screen" class="screen hidden">
+  <div class="report-wrap">
+    <header class="report-header">
+      <div class="logo">🎓 <span>AI Teacher</span></div>
+      <h1>Learning Report</h1>
+    </header>
+    <div class="report-grid">
+      <div class="card score-card">
+        <div class="score-big" id="report-score">—</div>
+        <div class="score-sub" id="report-questions">— questions</div>
+        <div class="score-sub" id="report-topic">—</div>
+      </div>
+      <div class="card">
+        <h2>Strong areas</h2><ul id="report-strong" class="report-list"></ul>
+      </div>
+      <div class="card">
+        <h2>Needs improvement</h2><ul id="report-weak" class="report-list"></ul>
+      </div>
+      <div class="card wide">
+        <h2>Summary</h2><p id="report-summary">…</p>
+      </div>
+      <div class="card">
+        <h2>Misconceptions found</h2><ul id="report-misconceptions" class="report-list"></ul>
+      </div>
+      <div class="card">
+        <h2>Recommendations</h2><ul id="report-recs" class="report-list"></ul>
+      </div>
+      <div class="card wide">
+        <h2>Homework</h2><ul id="report-homework" class="report-list"></ul>
+      </div>
+    </div>
+    <div class="report-actions">
+      <button class="btn primary big" id="report-next">Learn next topic →</button>
+      <button class="btn ghost big" id="report-download-video">⬇ Download lesson video</button>
+      <button class="btn ghost big" id="report-home">🏠 Home</button>
+    </div>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast" class="toast hidden"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./libs/three/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./libs/three/addons/controls/OrbitControls.js",
+    "three/addons/loaders/GLTFLoader.js": "./libs/three/addons/loaders/GLTFLoader.js",
+    "three/addons/loaders/DRACOLoader.js": "./libs/three/addons/loaders/DRACOLoader.js",
+    "three/addons/libs/meshopt_decoder.module.js": "./libs/three/addons/libs/meshopt_decoder.module.js",
+    "three/addons/utils/BufferGeometryUtils.js": "./libs/three/addons/utils/BufferGeometryUtils.js"
+  }
+}
+</script>
+<script type="module">
+  import { Avatar3DEngine } from './js/avatar-engine.js';
+  window.Avatar3DEngine = Avatar3DEngine;
+</script>
+<script src="libs/katex/katex.min.js"></script>
+<script src="js/api.js"></script>
+<script src="js/whiteboard.js"></script>
+<script src="js/classroom.js"></script>
+<script src="js/setup.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
