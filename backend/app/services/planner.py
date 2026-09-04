@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from .. import db
@@ -184,6 +185,12 @@ RULES:
    - For MATHEMATICS/CALCULUS: Use 'draw_equation' with step-by-step LaTeX derivations and 'plot_graph' with labeled functions and points.
    - For PROCESSES/FLOWS: Use 'draw_flowchart' with nodes and labeled edges.
    - For COMPARISONS: Use 'show_table' or 'draw_diagram' with side-by-side concept cards.
+   - For GEOGRAPHY/PLACES: Use 'draw_map' (region 'world'|'india') with labeled points.
+   - For HISTORY/SEQUENCES: Use 'draw_timeline' with dated events.
+   - For DEFINITIONS/CONCEPTUAL/ANY OTHER TOPIC: Use 'draw_concept_card' with a
+     'title' and 2-5 short 'points' drawn from THIS segment's actual content.
+   EVERY segment MUST include at least one visual built from this segment's real
+   content (never a generic placeholder). Also fill 'key_points' for every segment.
    Each visual should use chalk colors: 'yellow', 'blue', 'pink', 'green', 'white'.
 
 VISUAL EXAMPLES FOR INSPIRATION:
@@ -213,7 +220,9 @@ Return JSON with EXACTLY this structure:
       "concept": "<concept name in English>",
       "script": {{"main": "<spoken text>", "simpler": "<simpler variant>",
                   "deeper": "<deeper variant>"}},
+      "key_points": ["2-5 very short takeaways for THIS segment (shown on the board)"],
       "visuals": [{{"tool": "<tool name>", "args": {{...}}, "after_sentence": <int>}}],
+      "slide_prompt": "<optional: a short vivid prompt to generate an illustrative slide image for this segment; omit if a code-drawn visual is clearer>",
       "checkpoint": {{"question": "...", "expected_answer": "...",
                       "question_type": "mcq|short_answer|problem_solving|application|explain_own_words",
                       "options": ["..."], "answer_index": <int or null>,
@@ -388,22 +397,42 @@ def enrich_segment_visuals(seg: dict, topic: str) -> None:
         })
         return
 
-    # 5. Universal Conceptual Diagram: 3-Box Architecture
+    # 5. Content-driven concept card — works for ANY on-the-spot topic.
+    #    Built from the segment's own key_points / narration, not a generic box.
+    points = _derive_key_points(seg)
+    card_args: dict[str, Any] = {"title": concept, "chalk": "yellow"}
+    if points:
+        card_args["points"] = points
+    else:
+        card_args["subtitle"] = (script[:140] + "…") if len(script) > 140 else script
     seg.setdefault("visuals", []).append({
-        "tool": "draw_diagram",
+        "tool": "draw_concept_card",
         "after_sentence": 1,
-        "args": {
-            "title": f"Key Model: {concept}",
-            "clear_first": False,
-            "shapes": [
-                {"kind": "rect", "x": 20, "y": 50, "w": 22, "h": 22, "label": "1. Input / Foundation", "chalk": "blue"},
-                {"kind": "arrow", "x": 31, "y": 50, "x2": 44, "y2": 50, "label": "Drives", "chalk": "white"},
-                {"kind": "rect", "x": 55, "y": 50, "w": 22, "h": 22, "label": f"2. {concept[:16]}", "chalk": "yellow", "fill": True},
-                {"kind": "arrow", "x": 66, "y": 50, "x2": 79, "y2": 50, "label": "Yields", "chalk": "white"},
-                {"kind": "rect", "x": 88, "y": 50, "w": 18, "h": 22, "label": "3. Result", "chalk": "green"}
-            ]
-        }
+        "args": card_args,
     })
+
+
+def _derive_key_points(seg: dict, max_pts: int = 4) -> list[str]:
+    """Pull concise bullet points from the segment's own content.
+
+    Prefers an explicit ``key_points`` field from the planner; otherwise falls
+    back to sentence-splitting the main narration (handles Hindi danda too)."""
+    kp = seg.get("key_points") or seg.get("keypoints") or seg.get("points")
+    pts: list[str] = []
+    if isinstance(kp, list):
+        pts = [str(p).strip() for p in kp if str(p).strip()]
+    elif isinstance(kp, str) and kp.strip():
+        pts = [p.strip() for p in re.split(r"[\n•]|(?<=[.!?।])\s+", kp) if p.strip()]
+
+    if not pts:
+        script = (seg.get("script") or {}).get("main", "") or ""
+        for s in re.split(r"(?<=[.!?।])\s+", script.strip()):
+            s = s.strip()
+            if len(s) >= 12:
+                pts.append(s if len(s) <= 90 else s[:87].rstrip() + "…")
+            if len(pts) >= max_pts:
+                break
+    return pts[:max_pts]
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from .. import db
 from ..config import PERFORMANCES_DIR, UPLOADS_DIR
-from ..services import brain, parser, planner, rag
+from ..services import brain, parser, planner, rag, slides
 from ..services.capture import PerformanceCapture, PERSONA_VOICES
 from ..services.tpm_manager import tpm
 log = logging.getLogger("api")
@@ -178,6 +178,35 @@ class CaptureIn(BaseModel):
     variant: str = "main"           # main | simpler | deeper | regen
 
 
+async def _maybe_inject_slide(session_id: str, seg: dict, visuals: list) -> list:
+    """Optionally generate a Nano Banana slide for this segment and append it as
+    a show_image visual layered ON TOP of the code-drawn board. Off by default;
+    on disable/error the deterministic visuals are returned unchanged."""
+    prompt = (seg.get("slide_prompt") or "").strip()
+    if not prompt or not slides.slides_active():
+        return visuals
+    try:
+        url = await slides.generate_slide(prompt, session_id,
+                                          int(seg.get("seg_id", 0)))
+    except Exception as e:                                  # noqa: BLE001
+        log.error("slide injection failed (seg %s): %s", seg.get("seg_id"), e)
+        return visuals
+    if not url:
+        return visuals
+    max_after = 0
+    for v in (visuals or []):
+        try:
+            max_after = max(max_after, int(v.get("after_sentence", 0)))
+        except Exception:                                   # noqa: BLE001
+            pass
+    caption = seg.get("concept") or seg.get("title") or ""
+    return list(visuals or []) + [{
+        "tool": "show_image",
+        "after_sentence": max_after + 1,      # last → rides on top of the board
+        "args": {"url": url, "caption": caption},
+    }]
+
+
 @router.post("/sessions/{session_id}/capture")
 async def capture_session(session_id: str, variant: str = "main"):
     """Capture performances for ALL segments of the session plan."""
@@ -203,9 +232,11 @@ async def capture_session(session_id: str, variant: str = "main"):
                  (seg.get("script") or {}).get("main") or ""
         if not script.strip():
             continue
+        visuals = await _maybe_inject_slide(session_id, seg,
+                                            seg.get("visuals", []))
         cap = PerformanceCapture(session_id, seg["seg_id"], variant,
                                  persona_name=persona, voice=voice)
-        perf = await cap.capture(script, seg.get("visuals", []), lang_name)
+        perf = await cap.capture(script, visuals, lang_name)
         results.append(perf)
 
     db.set_status(session_id, "teaching")
@@ -236,6 +267,7 @@ async def capture_one(session_id: str, body: CaptureOneIn):
         body.variant) or (seg.get("script") or {}).get("main") or ""
     visuals = body.visuals_override if body.visuals_override is not None \
         else seg.get("visuals", [])
+    visuals = await _maybe_inject_slide(session_id, seg, visuals)
     lang_name = {"en": "English", "hi": "Hindi", "hinglish": "Hinglish"}[
         plan.get("language", "en")]
     persona = plan.get("persona", "Aarav Sir")
@@ -265,13 +297,44 @@ async def list_performances(session_id: str):
     return {"performances": out}
 
 
-@router.get("/performances/{session_id}/{wav_name}")
-async def get_performance_audio(session_id: str, wav_name: str):
-    path = (PERFORMANCES_DIR / session_id / wav_name).resolve()
+@router.get("/performances/{session_id}/{file_name}")
+async def get_performance_file(session_id: str, file_name: str):
+    """Serve a captured performance asset: audio (.wav) or slide image (.png)."""
+    path = (PERFORMANCES_DIR / session_id / file_name).resolve()
+    media = {".wav": "audio/wav", ".png": "image/png"}
     if not str(path).startswith(str(PERFORMANCES_DIR.resolve())) or \
-            not path.exists() or path.suffix != ".wav":
+            not path.exists() or path.suffix not in media:
         raise HTTPException(404, "Not found")
-    return FileResponse(str(path), media_type="audio/wav")
+    return FileResponse(str(path), media_type=media[path.suffix])
+
+
+class SlideIn(BaseModel):
+    seg_id: int
+    prompt: Optional[str] = None
+    force: bool = False
+
+
+@router.post("/sessions/{session_id}/slide")
+async def generate_slide_endpoint(session_id: str, body: SlideIn):
+    """On-demand Nano Banana slide generation for a single segment."""
+    s = db.get_session(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    if not slides.slides_active():
+        raise HTTPException(400, "Slides are disabled (set slides_enabled and "
+                                 "GEMINI_API_KEY in backend/.env)")
+    plan = json.loads(s["plan"] or "{}")
+    seg = next((x for x in plan.get("segments", [])
+                if x["seg_id"] == body.seg_id), None)
+    prompt = (body.prompt or (seg or {}).get("slide_prompt")
+              or (seg or {}).get("concept") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "No slide prompt available for this segment")
+    url = await slides.generate_slide(prompt, session_id, body.seg_id,
+                                      force=body.force)
+    if not url:
+        raise HTTPException(502, "Slide generation failed")
+    return {"url": url, "seg_id": body.seg_id}
 
 
 # ---------------------------------------------------------------------------

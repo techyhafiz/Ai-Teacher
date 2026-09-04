@@ -39,8 +39,14 @@ class Settings(BaseSettings):
     # a Live preview model; ids may differ per console region).
     gemini_api_key: str = ""
     gemini_text_model: str = "gemini-3.5-flash-lite"          # planning / evals / OCR
-    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview"  # voice capture + live
-    gemini_embedding_model: str = "text-embedding-004"
+    gemini_live_model: str = "gemini-2.5-flash-native-audio-latest"  # voice capture + live
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_image_model: str = "gemini-2.5-flash-image"        # "Nano Banana" slide images
+
+    # --- Whiteboard slides (optional Nano Banana enhancement) --------------
+    # Off by default; even when True it only activates if a gemini_api_key is set.
+    # When disabled or on any error, the deterministic code-drawn board stands.
+    slides_enabled: bool = False
 
     # --- TPM limits (tokens per rolling 60s window) ------------------------
     tpm_text_model: int = 250_000

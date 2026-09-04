@@ -119,7 +119,6 @@ const Classroom = (() => {
     'Professor Bheem': './avatars/bheem.glb',
   };
 
-  let talkingHead = null;
   let audioCtx = null;
 
   function getAudioCtx() {
@@ -128,6 +127,59 @@ const Classroom = (() => {
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
+  }
+
+  // Shared live/doubt teacher-audio player. Decodes streamed base64 PCM
+  // (24 kHz mono) and routes every chunk through ONE persistent bus so both the
+  // 3D avatar and the 2D fallback lip-sync to the live voice. Scheduled chunks
+  // are tracked so a barge-in can flush them instantly ("speak to interrupt").
+  function createLiveTeacherAudio() {
+    const actx = getAudioCtx();
+    const bus = actx.createGain();
+    bus.gain.value = 1.0;
+    bus.connect(actx.destination);
+    // tap the lip-sync analysers off the bus once (3D primary; 2D if active)
+    if (avatar3D) avatar3D.attachAudioSource(bus);
+    try { TeacherAvatar2D.attachAudioSource(bus); } catch (e) {}
+    let nextT = 0;
+    let sources = [];
+    return {
+      push(b64) {
+        const bin = atob(b64);
+        const n = bin.length >> 1;
+        const i16 = new Int16Array(n);
+        for (let i = 0; i < n; i++) {
+          i16[i] = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
+        }
+        const f = new Float32Array(n);
+        for (let i = 0; i < n; i++) f[i] = i16[i] / 32768;
+        const ab = actx.createBuffer(1, n, 24000);
+        ab.copyToChannel(f, 0);
+        const src = actx.createBufferSource();
+        src.buffer = ab;
+        src.connect(bus);
+        const now = actx.currentTime;
+        if (nextT < now) nextT = now + 0.04;
+        src.start(nextT);
+        nextT += ab.duration;
+        sources.push(src);
+        src.onended = () => { sources = sources.filter(s => s !== src); };
+        if (avatar3D) avatar3D.setSpeaking(true);
+        TeacherAvatar2D.setSpeaking(true);
+      },
+      // barge-in: cut all queued teacher audio right now
+      flush() {
+        for (const s of sources) { try { s.onended = null; s.stop(); } catch (e) {} }
+        sources = [];
+        nextT = 0;
+        if (avatar3D) avatar3D.setSpeaking(false);
+        TeacherAvatar2D.setSpeaking(false);
+      },
+      stop() {
+        this.flush();
+        try { bus.disconnect(); } catch (e) {}
+      },
+    };
   }
 
   // High-Fidelity 2D Animated Teacher Avatar Engine
@@ -589,110 +641,41 @@ const Classroom = (() => {
   }
 
   function ensureSegmentVisuals(seg, topic) {
-    let visuals = (seg.visuals && seg.visuals.length > 0) ? [...seg.visuals] : [];
+    const visuals = (seg.visuals && seg.visuals.length > 0) ? [...seg.visuals] : [];
+    // Backend visuals are the source of truth (planner.enrich_segment_visuals now
+    // guarantees at least a content-driven card per segment). Only synthesize a
+    // last-resort card here for bare segments (e.g. old cached plans, re-explains).
+    if (visuals.length > 0) return visuals;
+
     const concept = seg.concept || seg.kind || topic || 'Core Concept';
-    const script = (seg.script && (seg.script.main || seg.script.simpler)) || '';
-    const corpus = `${concept} ${script} ${topic}`.toLowerCase();
+    const points = deriveKeyPoints(seg);
+    const args = { title: concept, chalk: 'yellow' };
+    if (points.length) {
+      args.points = points;
+    } else {
+      const script = (seg.script && (seg.script.main || seg.script.simpler)) || '';
+      args.subtitle = script.length > 140 ? script.slice(0, 140) + '\u2026' : script;
+    }
+    return [{ tool: 'draw_concept_card', after_sentence: 1, args }];
+  }
 
-    const hasDiagram = visuals.some(v => v.tool === 'draw_diagram' || v.tool === 'plot_graph' || v.tool === 'draw_flowchart');
-    const hasEquation = visuals.some(v => v.tool === 'draw_equation');
-
-    if (!hasDiagram) {
-      if (/circuit|ohm|volt|current|resistor|battery|ampere|electricity/.test(corpus)) {
-        visuals.unshift({
-          tool: 'draw_diagram',
-          after_sentence: 1,
-          args: {
-            title: `${concept}: Complete Circuit Schematic`,
-            clear_first: false,
-            shapes: [
-              { kind: 'battery', x: 18, y: 50, voltage: 12, label: '12V Battery', chalk: 'yellow' },
-              { kind: 'wire', points: [18, 42, 18, 22, 82, 22, 82, 42], chalk: 'blue' },
-              { kind: 'resistor', x: 82, y: 50, label: 'R = 6 \u03a9', chalk: 'pink' },
-              { kind: 'wire', points: [82, 58, 82, 78, 18, 78, 18, 58], chalk: 'blue' },
-              { kind: 'arrow', x: 42, y: 22, x2: 58, y2: 22, label: 'Current I = 2.0A \u2192', chalk: 'green' },
-              { kind: 'circle', x: 50, y: 50, r: 4, label: 'V = 12V', chalk: 'yellow' }
-            ]
-          }
-        });
-      } else if (/force|newton|gravity|friction|motion|velocity|acceleration|mass/.test(corpus)) {
-        visuals.unshift({
-          tool: 'draw_diagram',
-          after_sentence: 1,
-          args: {
-            title: `${concept}: Free-Body Vector Diagram`,
-            clear_first: false,
-            shapes: [
-              { kind: 'line', points: [10, 68, 90, 68], chalk: 'white' },
-              { kind: 'rect', x: 50, y: 54, w: 22, h: 16, label: 'Mass (m)', chalk: 'yellow', fill: true },
-              { kind: 'vector', x: 50, y: 54, x2: 50, y2: 80, label: 'F_g = mg', chalk: 'pink' },
-              { kind: 'vector', x: 50, y: 54, x2: 50, y2: 28, label: 'F_N (Normal)', chalk: 'blue' },
-              { kind: 'vector', x: 50, y: 54, x2: 76, y2: 54, label: 'Applied Force \u2192', chalk: 'green' },
-              { kind: 'vector', x: 50, y: 54, x2: 30, y2: 54, label: '\u2190 Friction', chalk: 'pink' }
-            ]
-          }
-        });
-      } else if (/calculus|derivative|integral|slope|graph|function|quadratic|trig|sine/.test(corpus)) {
-        visuals.unshift({
-          tool: 'plot_graph',
-          after_sentence: 1,
-          args: {
-            title: `${concept}: Coordinate Function Graph`,
-            functions: [
-              { fn: 'x**2 - 2', label: 'f(x) = x\u00b2 - 2', color: 'yellow' },
-              { fn: '2*x - 3', label: 'Tangent Line (Slope = 2x)', color: 'pink' }
-            ],
-            x_range: [-3, 3],
-            x_label: 'x',
-            y_label: 'f(x)'
-          }
-        });
-      } else {
-        visuals.unshift({
-          tool: 'draw_diagram',
-          after_sentence: 1,
-          args: {
-            title: `Model: ${concept}`,
-            clear_first: false,
-            shapes: [
-              { kind: 'rect', x: 20, y: 50, w: 22, h: 22, label: '1. Input / Foundation', chalk: 'blue' },
-              { kind: 'arrow', x: 31, y: 50, x2: 44, y2: 50, label: 'Drives', chalk: 'white' },
-              { kind: 'rect', x: 55, y: 50, w: 22, h: 22, label: `2. ${concept.slice(0, 16)}`, chalk: 'yellow', fill: true },
-              { kind: 'arrow', x: 66, y: 50, x2: 79, y2: 50, label: 'Yields', chalk: 'white' },
-              { kind: 'rect', x: 88, y: 50, w: 18, h: 22, label: '3. Result', chalk: 'green' }
-            ]
-          }
-        });
+  function deriveKeyPoints(seg, maxPts = 4) {
+    const kp = seg.key_points || seg.keypoints || seg.points;
+    let pts = [];
+    if (Array.isArray(kp)) {
+      pts = kp.map(p => String(p).trim()).filter(Boolean);
+    } else if (typeof kp === 'string' && kp.trim()) {
+      pts = kp.split(/[\n\u2022]|(?<=[.!?\u0964])\s+/).map(s => s.trim()).filter(Boolean);
+    }
+    if (!pts.length) {
+      const script = (seg.script && seg.script.main) || '';
+      for (const s0 of script.trim().split(/(?<=[.!?\u0964])\s+/)) {
+        const s = s0.trim();
+        if (s.length >= 12) pts.push(s.length <= 90 ? s : s.slice(0, 87).trimEnd() + '\u2026');
+        if (pts.length >= maxPts) break;
       }
     }
-
-    if (!hasEquation) {
-      if (/circuit|ohm|volt|current|resistor|battery|ampere|electricity/.test(corpus)) {
-        visuals.push({
-          tool: 'draw_equation',
-          after_sentence: 2,
-          args: {
-            label: "Ohm's Law Formula",
-            latex: String.raw`V = I \times R \implies I = \frac{V}{R} = \frac{12\text{ V}}{6\,\Omega} = 2.0\text{ A}`,
-            position: 'bottom',
-            chalk: 'yellow'
-          }
-        });
-      } else if (/force|newton|gravity|friction|motion|velocity|acceleration|mass/.test(corpus)) {
-        visuals.push({
-          tool: 'draw_equation',
-          after_sentence: 2,
-          args: {
-            label: "Newton's Second Law",
-            latex: String.raw`\sum \vec{F} = m \cdot \vec{a} \implies \vec{a} = \frac{\vec{F}_{\text{net}}}{m}`,
-            position: 'bottom',
-            chalk: 'yellow'
-          }
-        });
-      }
-    }
-
-    return visuals;
+    return pts.slice(0, maxPts);
   }
 
   function playLiveSegment(seg, onDone) {
@@ -719,7 +702,7 @@ const Classroom = (() => {
 
       state.playing = true;
       setPlayIcon();
-      setupSubtitles(script);
+      setupSubtitles(script, estDuration);
       state.tStart = performance.now();
       scheduleTimeline();
 
@@ -760,7 +743,13 @@ const Classroom = (() => {
 
       // Build or enhance timeline: ensure primary visual starts at t = 0.05s
       let rawTl = (perf.timeline && perf.timeline.length) ? [...perf.timeline] : [];
-      if (!rawTl.length || !rawTl.some(e => e.tool === 'draw_diagram' || e.tool === 'plot_graph')) {
+      // Respect a recorded timeline that carries any real visual (diagram, graph,
+      // flowchart, timeline, table, map, concept card, code, or an injected slide).
+      // Only rebuild from segment visuals when the recording has none.
+      const PRIMARY_VISUALS = ['draw_diagram', 'plot_graph', 'draw_flowchart',
+        'draw_timeline', 'show_table', 'draw_map', 'draw_concept_card',
+        'write_code', 'show_image'];
+      if (!rawTl.length || !rawTl.some(e => PRIMARY_VISUALS.includes(e.tool))) {
         const estDur = perf.duration || 16;
         rawTl = visuals.map((v, i) => ({
           t: i === 0 ? 0.05 : Math.min(estDur - 1, (i + 1) * 3.5),
@@ -779,7 +768,7 @@ const Classroom = (() => {
       state.timeline = rawTl.map(e => ({ ...e, fired: false }));
       state.playing = true;
       setPlayIcon();
-      setupSubtitles(perf.transcript || '');
+      setupSubtitles(perf.transcript || '', perf.duration || 0);
 
       let buf;
       try {
@@ -822,7 +811,7 @@ const Classroom = (() => {
       src.onended = () => finish();
       startClock();
       src.start();
-      state.currentAudio = { buf, wtimes, duration: buf.duration, src };
+      state.currentAudio = { buf, wtimes, duration: buf.duration, src, finish, offset: 0 };
     });
   }
 
@@ -846,18 +835,53 @@ const Classroom = (() => {
     state.tlTimer = requestAnimationFrame(tick);
   }
 
+  // Pause/resume cached-performance playback. An AudioBufferSourceNode can't be
+  // restarted once stopped, so resume rebuilds a fresh source from the cached
+  // buffer at the saved offset and re-aligns the visual timeline clock.
+  function pausePlayback() {
+    const ca = state.currentAudio;
+    cancelAnimationFrame(state.tlTimer);
+    if (ca && ca.src) {
+      ca.offset = (performance.now() - state.tStart) / 1000;
+      if (ca.offset > ca.duration) ca.offset = ca.duration;
+      try { ca.src.onended = null; ca.src.stop(); } catch (e) {}
+      ca.src = null;
+    } else {
+      // live TTS segment (no cached buffer) — stop speech synthesis
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    state.playing = false;
+    if (avatar3D) avatar3D.setSpeaking(false);
+    TeacherAvatar2D.setSpeaking(false);
+  }
+
+  function resumePlayback() {
+    const ca = state.currentAudio;
+    if (!ca || !ca.buf) return;                            // nothing to resume
+    if ((ca.offset || 0) >= ca.duration - 0.05) return;    // already finished
+    const actx = getAudioCtx();
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    const src = actx.createBufferSource();
+    src.buffer = ca.buf;
+    src.connect(actx.destination);
+    if (avatar3D) avatar3D.attachAudioSource(src);
+    TeacherAvatar2D.attachAudioSource(src);
+    src.onended = () => ca.finish?.();
+    src.start(0, ca.offset || 0);
+    ca.src = src;
+    state.playing = true;
+    state.tStart = performance.now() - (ca.offset || 0) * 1000;
+    scheduleTimeline();
+    if (avatar3D) avatar3D.setSpeaking(true);
+    TeacherAvatar2D.setSpeaking(true);
+  }
+
   function togglePlay() {
     if (state.mode === 'checkpoint' || state.mode === 'quiz') return;
     if (state.playing) {
-      if (talkingHead) talkingHead.pauseSpeaking();
-      state.currentAudio?.src?.stop?.();
-      state.playing = false;
+      pausePlayback();
     } else {
-      if (talkingHead) talkingHead.startSpeaking();
-      state.currentAudio?.src?.start?.();
-      state.playing = true;
-      state.tStart = performance.now() - 0; // best-effort resume
-      scheduleTimeline();
+      resumePlayback();
     }
     setPlayIcon();
   }
@@ -872,29 +896,41 @@ const Classroom = (() => {
 
   let subTimer = null;
   let subSentences = [];
+  let subCues = [];
+  let subDuration = 0;
 
-  function setupSubtitles(text) {
+  function setupSubtitles(text, durationSec) {
     const el = $('subtitles');
     el.textContent = '';
-    subSentences = text.split(/(?<=[।.!?])\s+/).filter(Boolean);
-    let i = 0;
-    // We sync subtitles to audio roughly by proportion; the visual pauses
-    // add slack, so we re-sync per segment durations.
-    let nextAt = performance.now();
+    subDuration = durationSec || 0; // fallback when there's no decoded WAV (live TTS path)
+    // Split into sentences (supports the Hindi danda । as well as . ! ?)
+    subSentences = text.split(/(?<=[।.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    // Map each sentence onto the REAL audio timeline as a [startFrac,endFrac]
+    // window, weighted by character count so long sentences stay on screen
+    // longer. We read the actual clock (state.tStart + audio duration) at tick
+    // time — the SAME clock the whiteboard timeline uses — so captions stay
+    // locked to the voice and re-align automatically after pause/resume.
+    const total = subSentences.reduce((sum, s) => sum + s.length, 0) || 1;
+    let acc = 0;
+    subCues = subSentences.map(s => {
+      const startFrac = acc / total;
+      acc += s.length;
+      return { text: s, startFrac, endFrac: acc / total };
+    });
     clearInterval(subTimer);
-    subTimer = setInterval(() => {
-      if (!state.playing) return;
-      if (performance.now() >= nextAt) {
-        if (i < subSentences.length) {
-          el.textContent = subSentences[i];
-          const dur = Math.max(1800, subSentences[i].length * 78);
-          nextAt = performance.now() + dur;
-          i++;
-        } else {
-          el.textContent = '';
-        }
-      }
-    }, 250);
+    subTimer = setInterval(updateSubtitles, 100);
+  }
+
+  function updateSubtitles() {
+    if (!state.playing || !subCues.length) return;
+    const dur = (state.currentAudio && state.currentAudio.duration) || subDuration;
+    if (!dur) return;
+    const t = (performance.now() - state.tStart) / 1000; // shared audio clock
+    const frac = Math.max(0, Math.min(0.999, t / dur));
+    const cue = subCues.find(c => frac >= c.startFrac && frac < c.endFrac);
+    const next = cue ? cue.text : '';
+    const el = $('subtitles');
+    if (el.textContent !== next) el.textContent = next;
   }
 
   function fireSubtitlesPause(ms) {
@@ -1171,63 +1207,17 @@ const Classroom = (() => {
     source.connect(processor);
     processor.connect(audioCtx.destination);
 
-    // teacher speech streams through TalkingHead (lipsync + audio) — or a
-    // plain PCM queue player when the avatar is unavailable
-    let pcmFallback = null;
-    if (talkingHead) {
-      await talkingHead.streamStart({ sampleRate: 24000 }, () => {
-        $('cp-live-status').textContent = '💬 teacher is responding…';
-      }, () => { });
-    } else {
-      const pctx = new (window.AudioContext || window.webkitAudioContext)();
-      await pctx.resume();
-      let nextT = 0;
-      pcmFallback = {
-        push(b64) {
-          const buf = new Int16Array(b64.length / 2);
-          for (let i = 0; i < b64.length; i += 2) {
-            buf[i / 2] = b64.charCodeAt(i) | (b64.charCodeAt(i + 1) << 8);
-          }
-          const f = new Float32Array(buf.length);
-          for (let i = 0; i < buf.length; i++) f[i] = buf[i] / 32768;
-          const ab = pctx.createBuffer(1, f.length, 24000);
-          ab.copyToChannel(f, 0);
-          const src = pctx.createBufferSource();
-          src.buffer = ab;
-          src.connect(pctx.destination);
-          TeacherAvatar2D.attachAudioSource(src);
-          if (nextT < pctx.currentTime) nextT = pctx.currentTime + 0.05;
-          src.start(nextT);
-          nextT += ab.duration;
-        },
-        stop() {
-          try {
-            pctx.close();
-            TeacherAvatar2D.setSpeaking(false);
-          } catch (e) {}
-        },
-      };
-    }
+    // teacher speech streams through the shared live-audio player (routes to the
+    // 3D avatar's lip-sync analyser + speakers, flushable for barge-in)
+    const liveAudio = createLiveTeacherAudio();
 
-    function pcmToBytes(b64) {
-      const bin = atob(b64);
-      const buf = new Int16Array(bin.length / 2);
-      for (let i = 0; i < bin.length; i += 2) {
-        buf[i / 2] = bin.charCodeAt(i) | (bin.charCodeAt(i + 1) << 8);
-      }
-      return buf;
-    }
 
     let finalTranscript = '';
     state.liveWs = openLiveWs(
       { mode: 'checkpoint', seg_id: cp.seg.seg_id, concept: cp.seg.concept,
         question: cp.question, expected_answer: cp.expected,
         language: state.language, persona: state.persona },
-      (b64) => {
-        // teacher audio chunk -> avatar stream (lipsync'd) or fallback player
-        if (talkingHead) talkingHead.streamAudio({ audio: pcmToBytes(b64) });
-        else pcmFallback.push(b64);
-      },
+      (b64) => liveAudio.push(b64),                        // teacher audio chunk
       (t) => { },                                        // teacher speech text
       (t) => {
         finalTranscript += ' ' + t;
@@ -1240,12 +1230,11 @@ const Classroom = (() => {
           setLanguage(call.args.language, false);
         }
       },
-      () => { },
+      (d) => { if (d && d.type === 'interrupted') liveAudio.flush(); },  // barge-in
       (msg) => { $('cp-live-status').textContent = '⚠ ' + msg; },
       async () => {
         // conversation done — cleanup
-        try { talkingHead?.streamStop?.(); } catch (e) {}
-        try { pcmFallback?.stop?.(); } catch (e) {}
+        try { liveAudio.stop(); } catch (e) {}
         try { state.micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
         try { processor.disconnect(); source.disconnect(); } catch (e) {}
         try { audioCtx.close(); } catch (e) {}
@@ -1308,7 +1297,7 @@ const Classroom = (() => {
   function raiseHand() {
     if (state.mode === 'checkpoint' || state.mode === 'quiz') return;
     // pause playback if speaking
-    if (state.playing) { talkingHead.pauseSpeaking(); state.playing = false; setPlayIcon(); }
+    if (state.playing) { pausePlayback(); setPlayIcon(); }
     state.mode = 'raisehand';
     state.freeQuestion = true;
     const seg = state.plan.segments[state.segIndex] || { seg_id: 0, concept: state.plan.topic };
@@ -1348,63 +1337,25 @@ const Classroom = (() => {
     source.connect(processor);
     processor.connect(audioCtx.destination);
 
-    let pcmFallback = null;
-    if (talkingHead) {
-      await talkingHead.streamStart({ sampleRate: 24000 }, () => {}, () => {});
-    } else {
-      const pctx = new (window.AudioContext || window.webkitAudioContext)();
-      await pctx.resume();
-      let nextT = 0;
-      pcmFallback = {
-        push(b64) {
-          const buf = new Int16Array(b64.length / 2);
-          for (let i = 0; i < b64.length; i += 2) {
-            buf[i / 2] = b64.charCodeAt(i) | (b64.charCodeAt(i + 1) << 8);
-          }
-          const f = new Float32Array(buf.length);
-          for (let i = 0; i < buf.length; i++) f[i] = buf[i] / 32768;
-          const ab = pctx.createBuffer(1, f.length, 24000);
-          ab.copyToChannel(f, 0);
-          const src = pctx.createBufferSource();
-          src.buffer = ab;
-          src.connect(pctx.destination);
-          if (nextT < pctx.currentTime) nextT = pctx.currentTime + 0.05;
-          src.start(nextT);
-          nextT += ab.duration;
-        },
-        stop() { try { pctx.close(); } catch (e) {} },
-      };
-    }
+    const liveAudio = createLiveTeacherAudio();
 
-    function pcmToBytes(b64) {
-      const bin = atob(b64);
-      const buf = new Int16Array(bin.length / 2);
-      for (let i = 0; i < bin.length; i += 2) {
-        buf[i / 2] = bin.charCodeAt(i) | (bin.charCodeAt(i + 1) << 8);
-      }
-      return buf;
-    }
 
     let said = '';
     state.liveWs = openLiveWs(
       { mode: 'raise_hand', seg_id: cp.seg.seg_id, concept: cp.seg.concept,
         question: 'free Q&A — student asks, teacher answers',
         expected_answer: '', language: state.language, persona: state.persona },
-      (b64) => {
-        if (talkingHead) talkingHead.streamAudio({ audio: pcmToBytes(b64) });
-        else pcmFallback.push(b64);
-      },
+      (b64) => liveAudio.push(b64),
       (t) => {},
       (t) => { said += ' ' + t; },
       (call) => {
         if (call.name === 'ask_whiteboard') Whiteboard.execute('draw_diagram', call.args);
         if (call.name === 'switch_language') setLanguage(call.args.language, false);
       },
-      () => {},
+      (d) => { if (d && d.type === 'interrupted') liveAudio.flush(); },  // barge-in
       (msg) => toast('⚠ ' + msg),
       async () => {
-        try { talkingHead?.streamStop?.(); } catch (e) {}
-        try { pcmFallback?.stop?.(); } catch (e) {}
+        try { liveAudio.stop(); } catch (e) {}
         try { state.micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
         try { processor.disconnect(); source.disconnect(); audioCtx.close(); } catch (e) {}
         $('checkpoint-overlay').classList.add('hidden');

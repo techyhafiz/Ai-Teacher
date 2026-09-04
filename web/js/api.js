@@ -73,6 +73,8 @@ const API = (() => {
       getJSON(`/api/performances/${sessionId}`),
     performanceAudioUrl: (sessionId, wavName) =>
       `${base}/api/performances/${sessionId}/${wavName}`,
+    generateSlide: (sessionId, body) =>
+      postJSON(`/api/sessions/${sessionId}/slide`, body),
 
     // checkpoints / brain
     checkpoint: (sessionId, body) =>

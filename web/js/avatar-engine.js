@@ -29,6 +29,7 @@ export class Avatar3DEngine {
       idleMove: true,
       shadows: true,
       lipSyncSensitivity: 1.25, // Expressive mouth movement multiplier
+      lipSyncMaxOpen: 0.82,     // Hard cap on how wide the mouth can open (0..1) — lower = calmer
     }, options);
 
     this.scene = null;
@@ -288,7 +289,7 @@ export class Avatar3DEngine {
       }
       this.analyser = actx.createAnalyser();
       this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.25; // Ultra-fast and snappy response
+      this.analyser.smoothingTimeConstant = 0.5; // Balanced: responsive but not jittery
       this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
       sourceNode.connect(this.analyser);
       console.info('Successfully attached audio source to 3D avatar lipsync analyser');
@@ -490,38 +491,40 @@ export class Avatar3DEngine {
       if (totalEnergy > 0.03) {
         targets.viseme_sil = 0;
 
-        // Natural jaw opening (gentle, human-scaled: max ~0.60)
-        const openPower = Math.min(0.65, Math.max(eF1 * 1.8, normalizedEnergy * 0.60));
-        targets.jawOpen = openPower * 0.75;
-        targets.mouthOpen = openPower * 0.50;
+        // ONE coherent "openness" value drives the mouth. We deliberately do NOT
+        // stack a full-strength vowel viseme on top of a wide jawOpen+mouthOpen
+        // (that combo was the "weird" over-gaping mouth). The visemes below only
+        // *accent* the shape, scaled down and proportional to `open`.
+        const maxOpen = this.options.lipSyncMaxOpen || 0.82;
+        const open = Math.min(maxOpen, normalizedEnergy);
+        targets.jawOpen = open * 0.55;   // human-scaled jaw
+        targets.mouthOpen = open * 0.45;
 
-        // Primary Vowel Selection via Formant Ratios
-        if (eF1 > eF2 * 1.25) {
-          // Open Vowel / 'Ah' (e.g., father, car)
-          targets.viseme_aa = Math.min(0.75, normalizedEnergy * 0.85);
-          targets.viseme_O = Math.min(0.35, eF1 * 0.5);
+        // Gentle vowel accent from formant ratios (small, proportional to open)
+        if (eF1 > eF2 * 1.2) {
+          // Open vowel 'ah'
+          targets.viseme_aa = open * 0.45;
         } else if (eF2 > eF1 * 1.05) {
-          // Front Vowel / 'Ee', 'Eh' (e.g., see, teach, learn)
-          targets.viseme_E = Math.min(0.70, normalizedEnergy * 0.80);
-          targets.viseme_I = Math.min(0.60, eF2 * 1.2);
-          targets.mouthStretch = Math.min(0.40, eF2 * 0.8);
+          // Front vowel 'ee / eh'
+          targets.viseme_E = open * 0.40;
+          targets.mouthStretch = open * 0.30;
         } else {
-          // Back Vowel / 'Oh', 'Oo' (e.g., go, school)
-          targets.viseme_O = Math.min(0.65, normalizedEnergy * 0.75);
-          targets.viseme_U = Math.min(0.50, eBase * 1.0);
+          // Back vowel 'oh / oo'
+          targets.viseme_O = open * 0.40;
+          targets.mouthPucker = open * 0.25;
         }
 
-        // High frequency friction (sibilants: S, F, CH)
-        if (eF3 > 0.12 && eF3 > eF1 * 0.6) {
-          targets.viseme_SS = Math.min(0.65, eF3 * 1.5);
-          targets.viseme_FF = Math.min(0.55, eF3 * 1.2);
+        // Light sibilant hiss (s / f / ch) — subtle, never a full shape
+        if (eF3 > 0.15 && eF3 > eF1 * 0.7) {
+          targets.viseme_SS = Math.min(0.30, eF3 * 0.8);
         }
 
-        // Plosive lip closure (P, B, M)
-        if (totalEnergy < 0.12 && eBase > 0.06) {
-          targets.viseme_PP = 0.75;
-          targets.jawOpen *= 0.1;
+        // Plosive lip closure (p / b / m): briefly shut the mouth completely
+        if (totalEnergy < 0.10 && eBase > 0.05) {
+          targets.viseme_PP = 0.6;
+          targets.jawOpen = 0;
           targets.mouthOpen = 0;
+          targets.viseme_aa = 0; targets.viseme_E = 0; targets.viseme_O = 0;
         }
       } else {
         targets.viseme_sil = 1.0;
@@ -557,8 +560,8 @@ export class Avatar3DEngine {
     }
 
     // Coarticulation Smoothing (attack & decay)
-    const attackSpeed = 0.72; // Snappy attack
-    const decaySpeed = 0.30;  // Smooth natural release
+    const attackSpeed = 0.45; // Eased attack — reaches the shape without twitching
+    const decaySpeed = 0.22;  // Smooth natural release
     for (const [key, targetVal] of Object.entries(targets)) {
       const current = this.visemeWeights[key] || 0;
       const speed = targetVal > current ? attackSpeed : decaySpeed;

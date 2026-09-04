@@ -1,0 +1,35 @@
+# Render Blueprint — deploys the whole AI Teacher app (frontend + backend + live
+# WebSocket) as ONE free web service. Safe to commit: it contains NO secrets.
+# The API key is marked `sync: false`, so Render asks you for it in the dashboard
+# and never stores it in git.
+#
+# To use: push this file, then on https://render.com click
+# New + → Blueprint → pick this repo. Render reads this file automatically.
+services:
+  - type: web
+    name: ai-teacher
+    runtime: python
+    plan: free
+    rootDir: backend                 # requirements.txt + the app package live here
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false                  # <-- you paste this in the Render dashboard (never in git)
+      - key: GEMINI_TEXT_MODEL
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-2.5-flash-native-audio-latest
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-2.5-flash-image
+      - key: SLIDES_ENABLED
+        value: "false"
+      - key: TPM_TEXT_MODEL
+        value: "250000"
+      - key: TPM_LIVE_MODEL
+        value: "60000"
+      - key: PYTHON_VERSION
+        value: "3.11.9"

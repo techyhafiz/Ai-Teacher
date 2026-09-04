@@ -51,6 +51,8 @@ const Whiteboard = (() => {
 
   // state: list of draw operations that can be replayed on resize
   let ops = [];
+  // async image cache (keyed by URL) so show_image survives redraw() without re-fetch
+  const imageCache = {}; // url -> { img: HTMLImageElement, status: 'loading'|'ok'|'error' }
 
   function clear() {
     ops = [];
@@ -87,6 +89,10 @@ const Whiteboard = (() => {
     ops = [];
     clear();
     for (const op of replay) _exec(op, false);
+    // Replaying pops each op back off (record=false), leaving `ops` empty; restore
+    // the list so repeated redraws (e.g. several window resizes) keep replaying,
+    // and so a draw issued after a resize appends to the existing board.
+    ops = replay;
   }
 
   // ---- helpers ---------------------------------------------------------
@@ -929,6 +935,181 @@ const Whiteboard = (() => {
     ops.push({ tool: 'write_code', args });
   }
 
+  // ---- draw_concept_card -------------------------------------------------
+  // A titled chalk card with a bulleted key-point list. Also the content-driven
+  // fallback primitive for on-the-spot topics (see planner enrich_segment_visuals).
+
+  function drawConceptCard(args) {
+    const { title, subtitle, points = [], chalk = 'yellow', append = false } = args;
+    if (!append) { ops = []; clear(); }
+    const color = inkColor(chalk);
+    const cardX = ux(6), cardY = uy(9);
+    const cardW = W - cardX * 2, cardH = H - cardY * 2;
+
+    // Card frame
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.4;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    roundRect(ctx, cardX, cardY, cardW, cardH, 16, false, true);
+    ctx.restore();
+
+    const padX = cardX + 34;
+    const maxW = cardW - 68;
+    let yy = cardY + 26;
+
+    if (title) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(253, 224, 71, 0.5)';
+      ctx.shadowBlur = 6;
+      yy = wrapText(title, padX, yy, maxW, 40, '#fde047', 28, true);
+      ctx.restore();
+      chalkLine(() => {
+        ctx.moveTo(padX, yy + 3); ctx.lineTo(padX + Math.min(maxW, 240), yy + 3);
+      }, '#fde047', 2.4);
+      yy += 22;
+    }
+
+    if (subtitle) {
+      yy = wrapText(subtitle, padX, yy, maxW, 28, '#cbd5e1', 17);
+      yy += 14;
+    }
+
+    const list = Array.isArray(points) ? points
+      : String(points || '').split('\\n').join('\n').split('\n');
+    for (const p of list) {
+      const text = String(p).replace(/^\s*[-*•]\s+/, '').trim();
+      if (!text) continue;
+      if (yy > cardY + cardH - 34) break; // don't overflow the card
+      // glowing chalk pip
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc(padX + 8, yy + 13, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      yy = wrapText(text, padX + 28, yy, maxW - 28, 32, '#f8fafc', 20);
+      yy += 10;
+    }
+    ops.push({ tool: 'draw_concept_card', args });
+  }
+
+  // ---- draw_map ----------------------------------------------------------
+  // Schematic map: a bounding region (globe or generic frame) + labeled points.
+  // points/markers: [{ x, y (0..100), label, chalk, label_pos }]
+
+  function drawMap(args) {
+    const { region = 'world', points = [], markers, title, chalk = 'blue' } = args;
+    ops = []; clear();
+    const color = inkColor(chalk);
+
+    if (title) {
+      ctx.save();
+      ctx.fillStyle = '#fde047';
+      ctx.font = `700 24px 'Segoe UI', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(253, 224, 71, 0.4)';
+      ctx.shadowBlur = 6;
+      ctx.fillText(title, W / 2, 38);
+      ctx.restore();
+    }
+
+    const cx = W / 2, cy = H * 0.55;
+    const rx = W * 0.34, ry = H * 0.36;
+
+    if (region === 'world' || region === 'globe') {
+      chalkLine(() => ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2), color, 2.6);
+      // Faint equator + meridians so it reads as a globe
+      ctx.save();
+      ctx.strokeStyle = color + '55';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry * 0.32, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy - ry); ctx.lineTo(cx, cy + ry); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx * 0.45, ry, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    } else {
+      chalkLine(() => roundRect(ctx, cx - rx, cy - ry, rx * 2, ry * 2, 18, false, true), color, 2.6);
+      ctx.save();
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = `700 15px 'Segoe UI', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(region).toUpperCase(), cx, cy - ry - 10);
+      ctx.restore();
+    }
+
+    for (const p of (markers || points || [])) {
+      const px = ux(p.x ?? 50), py = uy(p.y ?? 50);
+      ctx.save();
+      ctx.fillStyle = '#f472b6';
+      ctx.shadowColor = '#f472b6';
+      ctx.shadowBlur = 7;
+      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      labelAt(px, py - 8, p.label || p.name, p.label_pos || 'above', inkColor(p.chalk || 'yellow'), 15);
+    }
+    ops.push({ tool: 'draw_map', args });
+  }
+
+  // ---- show_image (Nano Banana slide / any URL) --------------------------
+  // Overlays a cached image centered on the board (append semantics — the
+  // deterministic board underneath stands as graceful fallback while loading
+  // or on error). Draws from cache on redraw() so resize never re-fetches.
+
+  function drawImageEl(img, caption) {
+    const capH = caption ? 44 : 0;
+    const availW = W * 0.9, availH = (H - capH) * 0.86;
+    const iw = img.naturalWidth || img.width || 1;
+    const ih = img.naturalHeight || img.height || 1;
+    const scale = Math.min(availW / iw, availH / ih, 1.6);
+    const dw = iw * scale, dh = ih * scale;
+    const dx = (W - dw) / 2, dy = (H - capH - dh) / 2;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 14;
+    ctx.drawImage(img, dx, dy, dw, dh);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(248,250,252,0.22)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(dx, dy, dw, dh);
+    ctx.restore();
+
+    if (caption) {
+      ctx.save();
+      ctx.fillStyle = '#fde047';
+      ctx.font = `700 18px 'Segoe UI', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(253, 224, 71, 0.4)';
+      ctx.shadowBlur = 5;
+      ctx.fillText(caption, W / 2, dy + dh + 28);
+      ctx.restore();
+    }
+  }
+
+  function showImage(args) {
+    const { url, caption } = args;
+    if (url) {
+      let entry = imageCache[url];
+      if (!entry) {
+        const img = new Image();
+        entry = { img, status: 'loading' };
+        imageCache[url] = entry;
+        img.onload = () => { entry.status = 'ok'; redraw(); };
+        img.onerror = () => { entry.status = 'error'; redraw(); };
+        try { img.crossOrigin = 'anonymous'; } catch (e) {}
+        img.src = url;
+      }
+      if (entry.status === 'ok') drawImageEl(entry.img, caption);
+      // loading / error: draw nothing — underlying deterministic board stands
+    }
+    ops.push({ tool: 'show_image', args });
+  }
+
   function _exec(op, record = true) {
     switch (op.tool) {
       case 'write_text': writeText(op.args); break;
@@ -939,6 +1120,9 @@ const Whiteboard = (() => {
       case 'draw_flowchart': drawFlowchart(op.args); break;
       case 'show_table': showTable(op.args); break;
       case 'write_code': writeCode(op.args); break;
+      case 'draw_concept_card': drawConceptCard(op.args); break;
+      case 'draw_map': drawMap(op.args); break;
+      case 'show_image': showImage(op.args); break;
       default: console.warn('Unknown tool:', op.tool);
     }
     if (!record && ops.length) ops.pop();
@@ -957,6 +1141,9 @@ const Whiteboard = (() => {
     drawFlowchart,
     showTable,
     writeCode,
+    drawConceptCard,
+    drawMap,
+    showImage,
     execute: (tool, args) => _exec({ tool, args }),
   };
 })();
